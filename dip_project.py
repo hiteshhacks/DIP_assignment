@@ -12,3 +12,16 @@ import numpy as np
 DIRS = {(1, 0): 0, (1, -1): 1, (0, -1): 2, (-1, -1): 3,
         (-1, 0): 4, (-1, 1): 5, (0, 1): 6, (1, 1): 7}
 
+
+def make_test_image():
+    img = np.full((360, 640, 3), 255, np.uint8)
+    cv2.circle(img, (90, 100), 55, (0, 0, 200), -1)                      # circle
+    cv2.rectangle(img, (190, 50), (310, 150), (200, 0, 0), -1)           # square
+    cv2.fillPoly(img, [np.array([[450, 40], [390, 150], [510, 150]])],
+                 (0, 130, 0))                                            # triangle
+    cv2.circle(img, (100, 270), 60, (0, 0, 0), -1)                       # ring
+    cv2.circle(img, (100, 270), 30, (255, 255, 255), -1)                 # 1 hole
+    cv2.rectangle(img, (220, 210), (420, 330), (80, 80, 80), -1)         # 2 holes
+    cv2.circle(img, (275, 270), 20, (255, 255, 255), -1)
+    cv2.circle(img, (365, 270), 20, (255, 255, 255), -1)
+    return img
