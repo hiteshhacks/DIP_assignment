@@ -214,3 +214,82 @@ class Tracker:
             self.active = False
         return (int(px), int(py)), bbox
 
+def run_video(source, save=False):
+    if source is None:
+        print("No video given -> using synthetic demo video")
+        cap = SyntheticVideo()
+    else:
+        cap = cv2.VideoCapture(int(source) if source.isdigit() else source)
+        if not cap.isOpened():
+            sys.exit("Cannot open video source")
+
+    sub = cv2.createBackgroundSubtractorMOG2(history=200, varThreshold=40,
+                                             detectShadows=True)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    tracker, writer = Tracker(), None
+
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        mask = sub.apply(frame)
+        _, mask = cv2.threshold(mask, 200, 255, cv2.THRESH_BINARY)   # drop shadows
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        mask = cv2.dilate(mask, kernel, iterations=2)
+        cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        dets = []
+        for c in cnts:
+            if cv2.contourArea(c) > 400:
+                x, y, w, h = cv2.boundingRect(c)
+                dets.append((x + w / 2.0, y + h / 2.0, (x, y, w, h)))
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 1)
+
+        pos, bbox = tracker.update(dets)
+        if tracker.active and pos:
+            if bbox:
+                x, y, w, h = bbox
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
+                cv2.putText(frame, "Tracked", (x, y - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            cv2.circle(frame, pos, 4, (255, 255, 0), -1)
+            for i in range(1, len(tracker.trail)):
+                cv2.line(frame, tracker.trail[i - 1], tracker.trail[i], (0, 255, 255), 2)
+        cv2.putText(frame, f"Detections: {len(dets)}", (10, 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+
+        if save:
+            if writer is None:
+                os.makedirs("output", exist_ok=True)
+                h_, w_ = frame.shape[:2]
+                writer = cv2.VideoWriter("output/tracked.mp4",
+                                         cv2.VideoWriter_fourcc(*"mp4v"), 30, (w_, h_))
+            writer.write(frame)
+
+        cv2.imshow("Detection + Tracking (ESC to quit)", frame)
+        cv2.imshow("Foreground mask", mask)
+        if cv2.waitKey(25) & 0xFF == 27:
+            break
+
+    cap.release()
+    if writer:
+        writer.release()
+        print("Saved: output/tracked.mp4")
+    cv2.destroyAllWindows()
+
+# ------------------------------------------------------------------- main
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description="DIP mini project: Shape Analyzer & Tracker")
+    sub = ap.add_subparsers(dest="mode", required=True)
+    pi = sub.add_parser("image", help="chain code + Euler number + detection")
+    pi.add_argument("path", nargs="?", help="image file (omit for demo)")
+    pi.add_argument("--no-show", action="store_true")
+    pv = sub.add_parser("video", help="detect + track moving object")
+    pv.add_argument("source", nargs="?", help="video file or 0 for webcam (omit for demo)")
+    pv.add_argument("--save", action="store_true")
+    a = ap.parse_args()
+
+    if a.mode == "image":
+        run_image(a.path, show=not a.no_show)
+    else:
+        run_video(a.source, save=a.save)
