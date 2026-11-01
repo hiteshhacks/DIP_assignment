@@ -100,3 +100,117 @@ def euler_bitquad(bw):
     qd = ((s == 2) & (a == d)).sum()
     return int(round((q1 - q3 - 2 * qd) / 4)), int(round((q1 - q3 + 2 * qd) / 4))
 
+
+def analyze(bw, min_area=200, min_hole=15):
+    """Find objects; holes come from the contour hierarchy (RETR_CCOMP)."""
+    contours, hier = cv2.findContours(bw, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+    objs = []
+    if hier is None:
+        return objs
+    hier = hier[0]                                  # [next, prev, child, parent]
+    for i, c in enumerate(contours):
+        if hier[i][3] != -1:                        # this contour is a hole
+            continue
+        area = cv2.contourArea(c)
+        if area < min_area:
+            continue
+        holes = sum(1 for j in range(len(contours))
+                    if hier[j][3] == i and cv2.contourArea(contours[j]) >= min_hole)
+        m = cv2.moments(c)
+        cx, cy = m["m10"] / m["m00"], m["m01"] / m["m00"]
+        ch = chain_code(c)
+        fd = first_difference(ch)
+        objs.append(dict(contour=c, label=classify(c, area), area=area,
+                         centroid=(cx, cy), holes=holes, euler=1 - holes,
+                         chain=ch, fd=fd, sn=shape_number(fd)))
+    return objs
+
+
+
+# ------------------------------------------------------------- image mode
+def run_image(path, show=True):
+    img = cv2.imread(path) if path else None
+    if img is None:
+        print("No image given/found -> using built-in demo image\n")
+        img = make_test_image()
+    bw = segment(img)
+    objs = analyze(bw)
+    out = img.copy()
+
+    print(f"{'ID':<4}{'Shape':<12}{'Area':>8}{'Centroid':>16}{'Holes':>7}{'Euler':>7}{'ChainLen':>10}")
+    report = []
+    for k, o in enumerate(objs, 1):
+        cx, cy = o["centroid"]
+        print(f"{k:<4}{o['label']:<12}{o['area']:>8.0f}{f'({cx:.0f},{cy:.0f})':>16}"
+              f"{o['holes']:>7}{o['euler']:>7}{len(o['chain']):>10}")
+        cv2.drawContours(out, [o["contour"]], -1, (0, 0, 255), 2)
+        x, y, w, h = cv2.boundingRect(o["contour"])
+        cv2.rectangle(out, (x, y), (x + w, y + h), (0, 255, 255), 2)
+        cv2.putText(out, f"#{k} {o['label']} E={o['euler']}", (x, max(y - 6, 12)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+        sn = "".join(map(str, o["sn"])) if o["sn"] else "(too long)"
+        report.append(f"Object {k} ({o['label']})\n"
+                      f"  Chain code   : {''.join(map(str, o['chain']))}\n"
+                      f"  First diff   : {''.join(map(str, o['fd']))}\n"
+                      f"  Shape number : {sn}\n")
+
+    C, H = len(objs), sum(o["holes"] for o in objs)
+    e8, e4 = euler_bitquad(bw)
+    print(f"\nObjects C = {C}, Holes H = {H}  ->  Euler number E = C - H = {C - H}")
+    print(f"Bit-quad check: E(8-conn) = {e8}, E(4-conn) = {e4}")
+
+    os.makedirs("output", exist_ok=True)
+    cv2.imwrite("output/annotated.png", out)
+    cv2.imwrite("output/mask.png", bw)
+    with open("output/report.txt", "w") as f:
+        f.write("\n".join(report))
+    print("Saved: output/annotated.png, output/mask.png, output/report.txt")
+
+    if show:
+        panel = np.hstack([img, cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR), out])
+        s = min(1.0, 1600 / panel.shape[1])
+        panel = cv2.resize(panel, None, fx=s, fy=s)
+        cv2.imshow("Original | Segmented | Detected (any key to close)", panel)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+# ------------------------------------------------- Practical 10: tracking
+class Tracker:
+    """Constant-velocity Kalman filter + nearest-centroid association."""
+    def __init__(self, gate=80, max_lost=15):
+        kf = cv2.KalmanFilter(4, 2)          # state [x y vx vy], meas [x y]
+        kf.transitionMatrix = np.array([[1, 0, 1, 0], [0, 1, 0, 1],
+                                        [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
+        kf.measurementMatrix = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], np.float32)
+        kf.processNoiseCov = np.eye(4, dtype=np.float32) * 0.03
+        kf.measurementNoiseCov = np.eye(2, dtype=np.float32) * 0.5
+        kf.errorCovPost = np.eye(4, dtype=np.float32)
+        self.kf, self.gate, self.max_lost = kf, gate, max_lost
+        self.active, self.lost, self.trail = False, 0, []
+
+    def update(self, dets):                  # dets: [(cx, cy, (x,y,w,h)), ...]
+        if not self.active and dets:
+            cx, cy, _ = max(dets, key=lambda d: d[2][2] * d[2][3])   # largest blob
+            self.kf.statePost = np.array([[cx], [cy], [0], [0]], np.float32)
+            self.active, self.lost, self.trail = True, 0, []
+        if not self.active:
+            return None, None
+        pred = self.kf.predict()
+        px, py = float(pred[0, 0]), float(pred[1, 0])
+        best = None
+        if dets:
+            best = min(dets, key=lambda d: (d[0] - px) ** 2 + (d[1] - py) ** 2)
+            if np.hypot(best[0] - px, best[1] - py) > self.gate:
+                best = None
+        bbox = None
+        if best is not None:
+            est = self.kf.correct(np.array([[best[0]], [best[1]]], np.float32))
+            px, py = float(est[0, 0]), float(est[1, 0])
+            bbox, self.lost = best[2], 0
+        else:
+            self.lost += 1
+        self.trail.append((int(px), int(py)))
+        if self.lost > self.max_lost:
+            self.active = False
+        return (int(px), int(py)), bbox
+
