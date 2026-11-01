@@ -90,3 +90,13 @@ def shape_number(fd):                               # min circular rotation
         return None
     return min(tuple(np.roll(fd, -k)) for k in range(n))
 
+
+# ------------------------------------------------- Practical 8: Euler number
+def euler_bitquad(bw):
+    A = np.pad((bw > 0).astype(np.int32), 1)
+    a, b, c, d = A[:-1, :-1], A[:-1, 1:], A[1:, :-1], A[1:, 1:]
+    s = a + b + c + d
+    q1, q3 = (s == 1).sum(), (s == 3).sum()
+    qd = ((s == 2) & (a == d)).sum()
+    return int(round((q1 - q3 - 2 * qd) / 4)), int(round((q1 - q3 + 2 * qd) / 4))
+
