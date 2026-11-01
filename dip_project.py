@@ -47,3 +47,12 @@ class SyntheticVideo:
 
     def release(self):
         pass
+
+def segment(img):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    _, bw = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    if bw.mean() > 127:                      # objects must be white
+        bw = 255 - bw
+    return cv2.morphologyEx(bw, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+
