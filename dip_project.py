@@ -25,3 +25,25 @@ def make_test_image():
     cv2.circle(img, (275, 270), 20, (255, 255, 255), -1)
     cv2.circle(img, (365, 270), 20, (255, 255, 255), -1)
     return img
+
+
+class SyntheticVideo:
+    """Fake camera: red ball bouncing left-right (used when no video is given)."""
+    def __init__(self, n=600):
+        self.i, self.n = 0, n
+
+    def isOpened(self):
+        return True
+
+    def read(self):
+        if self.i >= self.n:
+            return False, None
+        t, self.i = self.i, self.i + 1
+        f = np.full((360, 640, 3), 230, np.uint8)
+        x = int(60 + abs((t * 6) % 1040 - 520))
+        y = int(180 + 100 * np.sin(t / 20))
+        cv2.circle(f, (x, y), 22, (0, 0, 200), -1)
+        return True, f
+
+    def release(self):
+        pass
