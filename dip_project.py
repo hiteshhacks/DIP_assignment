@@ -56,3 +56,37 @@ def segment(img):
         bw = 255 - bw
     return cv2.morphologyEx(bw, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
 
+
+def classify(c, area):
+    peri = cv2.arcLength(c, True)
+    approx = cv2.approxPolyDP(c, 0.04 * peri, True)
+    n = len(approx)
+    circ = 4 * np.pi * area / (peri ** 2) if peri else 0
+    if n == 3:
+        return "Triangle"
+    if n == 4:
+        x, y, w, h = cv2.boundingRect(c)
+        return "Square" if 0.9 <= w / float(h) <= 1.1 else "Rectangle"
+    if n > 6 or circ > 0.8:
+        return "Circle"
+    return f"Polygon({n})"
+
+
+# ------------------------------------------------- Practical 7: chain code
+def chain_code(contour):
+    pts = contour[:, 0, :]                          # (x, y) points
+    steps = np.roll(pts, -1, axis=0) - pts          # closed boundary
+    return np.array([DIRS[(int(dx), int(dy))] for dx, dy in steps
+                     if (int(dx), int(dy)) in DIRS], dtype=int)
+
+
+def first_difference(chain):                        # rotation invariant
+    return np.mod(chain - np.roll(chain, 1), 8)
+
+
+def shape_number(fd):                               # min circular rotation
+    n = len(fd)
+    if n == 0 or n > 1500:                          # skip huge contours (O(n^2))
+        return None
+    return min(tuple(np.roll(fd, -k)) for k in range(n))
+
